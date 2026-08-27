@@ -1,0 +1,213 @@
+---
+title: "Likelihood, Bootstrap, and Rejection Sampling"
+subtitle: "Three computational statistics exercises"
+author: "George Oikonomidis"
+editor: visual
+---
+
+```{r}
+#| label: setup
+set.seed(2026)
+options(digits = 5)
+```
+
+## Exercise 1: inverse-Gamma MLE for whale diving times
+
+The diving times are modelled with the inverse-Gamma density
+
+$$f(x;\alpha,\beta)=\frac{\beta^\alpha}{\Gamma(\alpha)}
+x^{-(\alpha+1)}e^{-\beta/x},
+\qquad x>0.$$
+
+The log-likelihood is
+
+$$\ell(\alpha,\beta)=n\alpha\log\beta-n\log\Gamma(\alpha)
+-(\alpha+1)\sum_i\log x_i-\beta\sum_i\frac{1}{x_i}.$$
+
+```{r}
+whales <- scan("data/whales.txt", quiet = TRUE)
+
+loglik_inverse_gamma <- function(alpha, beta, x) {
+  if (alpha <= 0 || beta <= 0) return(-Inf)
+
+  n <- length(x)
+  n * alpha * log(beta) - n * lgamma(alpha) -
+    (alpha + 1) * sum(log(x)) - beta * sum(1 / x)
+}
+
+c(
+  minimum = min(whales),
+  maximum = max(whales),
+  observations = length(whales)
+)
+```
+
+Assume $\beta=1$. The score and its derivative are
+
+$$\frac{\partial\ell}{\partial\alpha}
+=n\log\beta-n\,\psi(\alpha)-\sum_i\log x_i,$$
+
+$$\frac{\partial^2\ell}{\partial\alpha^2}
+=-n\,\psi_1(\alpha),$$
+
+where $\psi$ and $\psi_1$ are the digamma and trigamma functions.
+
+```{r}
+newton_inverse_gamma_shape <- function(x, beta = 1, start = 2,
+                                       tolerance = 1e-10,
+                                       max_iter = 100) {
+  alpha <- start
+  trace <- data.frame(iteration = 0, alpha = alpha)
+
+  for (iteration in seq_len(max_iter)) {
+    score <- length(x) * log(beta) -
+      length(x) * digamma(alpha) - sum(log(x))
+    hessian <- -length(x) * trigamma(alpha)
+    step_fraction <- 1
+    candidate <- alpha - step_fraction * score / hessian
+
+    while ((!is.finite(candidate) || candidate <= 0) &&
+           step_fraction > 2^-20) {
+      step_fraction <- step_fraction / 2
+      candidate <- alpha - step_fraction * score / hessian
+    }
+
+    if (!is.finite(candidate) || candidate <= 0) {
+      stop("Newton-Raphson could not find an admissible step.")
+    }
+
+    trace <- rbind(
+      trace,
+      data.frame(iteration = iteration, alpha = candidate)
+    )
+
+    if (abs(candidate - alpha) <= tolerance * (1 + abs(alpha))) {
+      return(list(estimate = candidate, converged = TRUE, trace = trace))
+    }
+
+    alpha <- candidate
+  }
+
+  list(estimate = alpha, converged = FALSE, trace = trace)
+}
+
+shape_fit <- newton_inverse_gamma_shape(whales, beta = 1, start = 2)
+
+shape_check <- optimize(
+  function(alpha) loglik_inverse_gamma(alpha, beta = 1, x = whales),
+  interval = c(0.1, 10),
+  maximum = TRUE
+)
+
+data.frame(
+  method = c("Newton-Raphson", "optimize"),
+  alpha_hat = c(shape_fit$estimate, shape_check$maximum),
+  log_likelihood = c(
+    loglik_inverse_gamma(shape_fit$estimate, 1, whales),
+    shape_check$objective
+  )
+)
+```
+
+No elementary closed form exists for the inverse of the digamma equation, so a numerical root finder or optimizer is genuinely required for $\widehat\alpha$.
+
+## Exercise 2: bootstrap bias and standard error of an exponential MLE
+
+For $X_i\sim\operatorname{Exp}(\theta)$ with **rate** $\theta$,
+
+$$\widehat\theta=\frac{n}{\sum_iX_i}=\frac{1}{\overline X}.$$
+
+Generate samples from the model, estimate the bootstrap bias and standard error of $\widehat\theta$, and compare them with the theoretical values
+
+$$\operatorname{Bias}(\widehat\theta)=\frac{\theta}{n-1},
+\qquad
+\operatorname{SE}(\widehat\theta)=
+\frac{n\theta}{(n-1)\sqrt{n-2}}.$$
+
+```{r}
+bootstrap_exponential_rate <- function(x, B = 1000) {
+  theta_hat <- 1 / mean(x)
+  bootstrap_estimates <- replicate(
+    B,
+    1 / mean(sample(x, replace = TRUE))
+  )
+
+  c(
+    estimate = theta_hat,
+    bootstrap_bias = mean(bootstrap_estimates) - theta_hat,
+    bootstrap_se = sd(bootstrap_estimates)
+  )
+}
+
+n <- 25
+theta <- 1
+outer_replications <- 20
+
+bootstrap_study <- t(replicate(
+  outer_replications,
+  bootstrap_exponential_rate(
+    rexp(n, rate = theta),
+    B = 1000
+  )
+))
+
+comparison <- data.frame(
+  quantity = c("Bias", "Standard error"),
+  average_bootstrap_estimate = c(
+    mean(bootstrap_study[, "bootstrap_bias"]),
+    mean(bootstrap_study[, "bootstrap_se"])
+  ),
+  theoretical_value = c(
+    theta / (n - 1),
+    n * theta / ((n - 1) * sqrt(n - 2))
+  )
+)
+
+comparison
+```
+
+With only 20 outer replications, the comparison itself has visible Monte Carlo error. The exercise is useful precisely because it separates the bootstrap approximation inside each sample from repeated-sampling performance across samples.
+
+## Exercise 3: Gamma generation by rejection sampling
+
+For a Gamma target with shape $\alpha=3$ and rate $\beta=2$, use an exponential proposal with rate $\lambda=1$. The ratio is maximized at
+
+$$\widehat x=\frac{\alpha-1}{\beta-\lambda}=2.$$
+
+```{r}
+gamma_rejection_sample <- function(n, alpha = 3, beta = 2, lambda = 1) {
+  stopifnot(alpha > 1, lambda > 0, lambda < beta)
+  x_hat <- (alpha - 1) / (beta - lambda)
+  result <- numeric(n)
+  attempts <- 0L
+  accepted <- 0L
+
+  while (accepted < n) {
+    V <- rexp(1, rate = lambda)
+    W <- runif(1)
+    acceptance_probability <-
+      (V / x_hat)^(alpha - 1) *
+      exp(-(beta - lambda) * (V - x_hat))
+
+    attempts <- attempts + 1L
+    if (W <= acceptance_probability) {
+      accepted <- accepted + 1L
+      result[accepted] <- V
+    }
+  }
+
+  list(sample = result, acceptance_rate = n / attempts)
+}
+
+gamma_sample <- gamma_rejection_sample(1000)
+gamma_sample$acceptance_rate
+```
+
+```{r}
+hist(gamma_sample$sample, probability = TRUE, breaks = 30,
+     col = "grey85", border = "white",
+     main = "Gamma rejection sampler",
+     xlab = "x")
+curve(dgamma(x, shape = 3, rate = 2), add = TRUE,
+      col = "firebrick", lwd = 2)
+```

@@ -1,0 +1,339 @@
+---
+title: "Numerical MLE and Likelihood-Based Inference"
+subtitle: "Exponential and Gamma models for whale diving times"
+author: "George Oikonomidis"
+editor: visual
+---
+
+## Aim
+
+This case study connects numerical optimization with statistical inference. Maximum-likelihood estimates are obtained numerically, checked against analytical results where available, and used to construct Wald and likelihood-ratio confidence intervals.
+
+```{r}
+#| label: setup
+options(digits = 5)
+
+whales <- scan("data/whales.txt", quiet = TRUE)
+stopifnot(length(whales) > 0, all(whales > 0))
+
+summary(whales)
+```
+
+## Exponential model
+
+Let $Y_1,\ldots,Y_n$ be independent exponential observations with **rate** $\lambda>0$:
+
+$$f(y;\lambda)=\lambda e^{-\lambda y}.$$
+
+The log-likelihood is
+
+$$\ell(\lambda)=n\log\lambda-\lambda\sum_{i=1}^n y_i.$$
+
+```{r}
+loglik_exponential <- function(lambda, y) {
+  if (lambda <= 0) return(-Inf)
+  length(y) * log(lambda) - lambda * sum(y)
+}
+
+neg_loglik_exponential <- function(lambda, y) {
+  -loglik_exponential(lambda, y)
+}
+
+lambda_grid <- seq(0.2, 3.5, length.out = 400)
+plot(
+  lambda_grid,
+  vapply(lambda_grid, loglik_exponential, numeric(1), y = whales),
+  type = "l", lwd = 2,
+  xlab = expression(lambda), ylab = "log-likelihood",
+  main = "Exponential log-likelihood"
+)
+```
+
+## Numerical MLE and analytical verification
+
+The optimization is bounded away from zero and requests a numerical Hessian.
+
+```{r}
+fit_exponential <- optim(
+  par = 1,
+  fn = neg_loglik_exponential,
+  y = whales,
+  method = "L-BFGS-B",
+  lower = 1e-8,
+  hessian = TRUE
+)
+
+if (fit_exponential$convergence != 0) {
+  stop("The exponential optimization did not converge.")
+}
+
+lambda_mle_numerical <- unname(fit_exponential$par)
+lambda_mle_analytical <- 1 / mean(whales)
+
+data.frame(
+  method = c("Numerical MLE", "Analytical MLE"),
+  rate = c(lambda_mle_numerical, lambda_mle_analytical),
+  mean_scale = 1 / c(lambda_mle_numerical, lambda_mle_analytical)
+)
+```
+
+The distinction between rate $\lambda$ and mean/scale $1/\lambda$ is explicit because `rexp()` and `dexp()` use `rate` by default.
+
+## Hessian-based standard error and Wald interval
+
+The observed information is the Hessian of the negative log-likelihood at the MLE. Its inverse approximates the estimator's variance.
+
+```{r}
+observed_information <- fit_exponential$hessian[1, 1]
+se_lambda <- sqrt(1 / observed_information)
+
+wald_ci <- lambda_mle_numerical + qnorm(c(0.025, 0.975)) * se_lambda
+
+data.frame(
+  estimate = lambda_mle_numerical,
+  standard_error = se_lambda,
+  lower_95 = wald_ci[1],
+  upper_95 = wald_ci[2]
+)
+```
+
+## Likelihood-ratio confidence interval
+
+The approximate 95% likelihood-ratio region contains parameter values satisfying
+
+$$2\{\ell(\widehat\lambda)-\ell(\lambda)\}\leq\chi^2_{1,0.95}.$$
+
+```{r}
+lr_distance <- function(lambda, y, lambda_hat, level = 0.95) {
+  2 * (loglik_exponential(lambda_hat, y) - loglik_exponential(lambda, y)) -
+    qchisq(level, df = 1)
+}
+
+lr_lower <- uniroot(
+  lr_distance,
+  interval = c(1e-6, lambda_mle_numerical),
+  y = whales,
+  lambda_hat = lambda_mle_numerical
+)$root
+
+lr_upper <- uniroot(
+  lr_distance,
+  interval = c(lambda_mle_numerical, 5),
+  y = whales,
+  lambda_hat = lambda_mle_numerical
+)$root
+
+interval_comparison <- data.frame(
+  method = c("Wald", "Likelihood ratio"),
+  lower = c(wald_ci[1], lr_lower),
+  upper = c(wald_ci[2], lr_upper)
+)
+
+interval_comparison
+```
+
+```{r}
+loglik_values <- vapply(
+  lambda_grid,
+  loglik_exponential,
+  numeric(1),
+  y = whales
+)
+
+plot(lambda_grid, loglik_values, type = "l", lwd = 2,
+     xlab = expression(lambda), ylab = "log-likelihood",
+     main = "Likelihood-ratio interval")
+abline(v = c(lr_lower, lambda_mle_numerical, lr_upper),
+       lty = c(2, 1, 2), col = c("steelblue", "firebrick", "steelblue"))
+abline(h = loglik_exponential(lambda_mle_numerical, whales) -
+         qchisq(0.95, 1) / 2,
+       lty = 3)
+```
+
+## Gamma extension
+
+The Gamma model adds a shape parameter $\alpha$ and uses a rate parameter $\beta$:
+
+$$f(y;\alpha,\beta)=\frac{\beta^\alpha}{\Gamma(\alpha)}
+y^{\alpha-1}e^{-\beta y}.$$
+
+Optimizing on the log-parameter scale guarantees $\alpha,\beta>0$.
+
+```{r}
+neg_loglik_gamma <- function(log_parameters, y) {
+  shape <- exp(log_parameters[1])
+  rate <- exp(log_parameters[2])
+  -sum(dgamma(y, shape = shape, rate = rate, log = TRUE))
+}
+
+initial_shape <- 1
+initial_rate <- initial_shape / mean(whales)
+
+fit_gamma <- optim(
+  par = log(c(initial_shape, initial_rate)),
+  fn = neg_loglik_gamma,
+  y = whales,
+  method = "BFGS",
+  hessian = TRUE
+)
+
+if (fit_gamma$convergence != 0) {
+  stop("The Gamma optimization did not converge.")
+}
+
+gamma_parameters <- exp(fit_gamma$par)
+names(gamma_parameters) <- c("shape", "rate")
+
+model_comparison <- data.frame(
+  model = c("Exponential", "Gamma"),
+  parameters = c(1, 2),
+  log_likelihood = c(-fit_exponential$value, -fit_gamma$value)
+)
+model_comparison$AIC <- with(
+  model_comparison,
+  2 * parameters - 2 * log_likelihood
+)
+
+gamma_parameters
+model_comparison
+```
+
+The Gamma model should only be preferred if the additional flexibility produces a meaningful improvement after accounting for its extra parameter. A lower AIC is evidence in that direction, not a substitute for model diagnostics.
+
+## Profile likelihood for a parameter
+
+For a parameter of interest $\psi$ and nuisance parameter $\eta$, the profile log-likelihood is
+
+$$\ell_p(\psi)=\max_{\eta}\ell(\psi,\eta).$$
+
+Profiling is different from fixing the nuisance parameter at its joint MLE: it is re-estimated at every candidate value of $\psi$.
+
+For the Gamma model, if the shape $\alpha$ is fixed, maximization over the rate has the analytical solution
+
+$$\widehat\beta(\alpha)=\frac{n\alpha}{\sum_i y_i}
+=\frac{\alpha}{\overline y}.$$
+
+```{r}
+gamma_loglik <- function(shape, rate, y) {
+  if (shape <= 0 || rate <= 0) return(-Inf)
+  sum(dgamma(y, shape = shape, rate = rate, log = TRUE))
+}
+
+profile_shape <- function(shape, y) {
+  if (shape <= 0) return(-Inf)
+  conditional_rate <- shape / mean(y)
+  gamma_loglik(shape, conditional_rate, y)
+}
+
+shape_hat <- unname(gamma_parameters["shape"])
+profile_cutoff <- -fit_gamma$value - qchisq(0.95, df = 1) / 2
+
+shape_root <- function(shape) {
+  profile_shape(shape, whales) - profile_cutoff
+}
+
+shape_profile_ci <- c(
+  lower = uniroot(shape_root, c(0.05, shape_hat))$root,
+  upper = uniroot(shape_root, c(shape_hat, 10))$root
+)
+
+data.frame(
+  parameter = "Gamma shape",
+  estimate = shape_hat,
+  lower_95 = shape_profile_ci["lower"],
+  upper_95 = shape_profile_ci["upper"]
+)
+```
+
+The likelihood-ratio profile interval contains values satisfying
+
+$$2\{\ell_p(\widehat\alpha)-\ell_p(\alpha)\}
+\leq \chi^2_{1,0.95}.$$
+
+## Profile likelihood for a function of parameters
+
+Now let the parameter of interest be the Gamma mean
+
+$$\mu=\frac{\alpha}{\beta}.$$
+
+For a fixed value of $\mu$, reparameterize $\beta=\alpha/\mu$ and maximize over the nuisance shape $\alpha$. This profiles a **function of two original parameters** without relying on a delta-method approximation.
+
+```{r}
+profile_mean <- function(mu, y) {
+  if (mu <= 0) return(-Inf)
+
+  conditional_fit <- optimize(
+    function(log_shape) {
+      shape <- exp(log_shape)
+      rate <- shape / mu
+      -gamma_loglik(shape, rate, y)
+    },
+    interval = log(c(0.05, 50))
+  )
+
+  -conditional_fit$objective
+}
+
+mean_hat <- unname(gamma_parameters["shape"] / gamma_parameters["rate"])
+
+mean_root <- function(mu) {
+  profile_mean(mu, whales) - profile_cutoff
+}
+
+mean_profile_ci <- c(
+  lower = uniroot(mean_root, c(0.05, mean_hat))$root,
+  upper = uniroot(mean_root, c(mean_hat, 2))$root
+)
+
+data.frame(
+  function_of_parameters = "Gamma mean = shape / rate",
+  estimate = mean_hat,
+  lower_95 = mean_profile_ci["lower"],
+  upper_95 = mean_profile_ci["upper"]
+)
+```
+
+```{r}
+shape_grid <- seq(shape_profile_ci["lower"] * 0.8,
+                  shape_profile_ci["upper"] * 1.2,
+                  length.out = 300)
+mean_grid <- seq(mean_profile_ci["lower"] * 0.8,
+                 mean_profile_ci["upper"] * 1.2,
+                 length.out = 300)
+
+par(mfrow = c(1, 2))
+plot(
+  shape_grid,
+  vapply(shape_grid, profile_shape, numeric(1), y = whales),
+  type = "l", lwd = 2,
+  xlab = expression(alpha), ylab = "Profile log-likelihood",
+  main = "Profile for Gamma shape"
+)
+abline(h = profile_cutoff, lty = 3)
+abline(v = c(shape_profile_ci["lower"], shape_hat,
+             shape_profile_ci["upper"]),
+       lty = c(2, 1, 2), col = c("steelblue", "firebrick", "steelblue"))
+
+plot(
+  mean_grid,
+  vapply(mean_grid, profile_mean, numeric(1), y = whales),
+  type = "l", lwd = 2,
+  xlab = expression(mu), ylab = "Profile log-likelihood",
+  main = "Profile for Gamma mean"
+)
+abline(h = profile_cutoff, lty = 3)
+abline(v = c(mean_profile_ci["lower"], mean_hat,
+             mean_profile_ci["upper"]),
+       lty = c(2, 1, 2), col = c("steelblue", "firebrick", "steelblue"))
+par(mfrow = c(1, 1))
+```
+
+Profile likelihood automatically reflects asymmetry and the dependence between parameters. It is especially useful when a Wald interval is distorted by a nonlinear transformation or when the likelihood is not close to quadratic.
+
+## Key checks
+
+- Use log-densities rather than products of densities.
+- Encode positivity through bounds or a log transformation.
+- Check the optimizer's convergence code.
+- Confirm that the observed information is positive before reporting standard errors.
+- Compare numerical results with analytical solutions whenever one exists.

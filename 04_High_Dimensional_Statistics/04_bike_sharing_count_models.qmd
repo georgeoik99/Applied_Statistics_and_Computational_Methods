@@ -1,0 +1,236 @@
+---
+title: "Bike Sharing Count Models"
+subtitle: "Poisson, quasi-Poisson, and negative-binomial regression in R"
+format:
+  gfm:
+    toc: true
+    number-sections: true
+engine: knitr
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+This notebook models hourly Capital Bikeshare rentals using environmental and seasonal predictors. It corrects the main limitation of the original analysis: `casual` and `registered` are components of the response because
+
+$$
+cnt = casual + registered.
+$$
+
+They are therefore excluded from every predictive model.
+
+## Setup and data validation
+
+```{r}
+required_packages <- c("ggplot2", "MASS", "knitr")
+missing_packages <- required_packages[
+  !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
+]
+
+if (length(missing_packages) > 0) {
+  stop("Install the missing packages: ", paste(missing_packages, collapse = ", "))
+}
+
+library(ggplot2)
+library(MASS)
+library(knitr)
+```
+
+```{r}
+hours <- read.csv(file.path("data", "hour.csv"))
+hours$dteday <- as.Date(hours$dteday)
+
+stopifnot(all(hours$cnt == hours$casual + hours$registered))
+stopifnot(!anyNA(hours))
+
+data.frame(
+  Observations = nrow(hours),
+  Variables = ncol(hours),
+  StartDate = min(hours$dteday),
+  EndDate = max(hours$dteday)
+) |>
+  kable(caption = "Dataset validation")
+```
+
+## Descriptive analysis
+
+```{r}
+ggplot(hours, aes(x = cnt)) +
+  geom_histogram(bins = 60, fill = "#452D62", color = "white") +
+  labs(title = "Distribution of hourly bike rentals", x = "Hourly rentals", y = "Count") +
+  theme_minimal()
+```
+
+```{r}
+daily_counts <- aggregate(cnt ~ dteday, data = hours, sum)
+
+ggplot(daily_counts, aes(x = dteday, y = cnt)) +
+  geom_line(alpha = 0.35, color = "gray40") +
+  geom_smooth(se = FALSE, color = "#2C7FB8") +
+  labs(title = "Daily bike rentals over time", x = "Date", y = "Daily rentals") +
+  theme_minimal()
+```
+
+## Prepare categorical predictors
+
+```{r}
+hours$season <- factor(
+  hours$season,
+  levels = 1:4,
+  labels = c("winter", "spring", "summer", "fall")
+)
+hours$yr <- factor(hours$yr, levels = c(0, 1), labels = c("2011", "2012"))
+hours$mnth <- factor(hours$mnth)
+hours$hr <- factor(hours$hr)
+hours$holiday <- factor(hours$holiday)
+hours$weekday <- factor(hours$weekday)
+hours$workingday <- factor(hours$workingday)
+hours$weathersit <- factor(hours$weathersit)
+
+train_data <- subset(hours, yr == "2011")
+test_data <- subset(hours, yr == "2012")
+
+c(train = nrow(train_data), test = nrow(test_data))
+```
+
+Using 2011 for estimation and 2012 for evaluation avoids a random split that would mix neighbouring time periods. `instant`, `casual`, `registered`, and `yr` are not included in the model formula.
+
+## Poisson and overdispersion
+
+```{r}
+base_formula <- cnt ~ season + mnth + hr + holiday + weekday +
+  workingday + weathersit + atemp + hum + windspeed
+
+poisson_model <- glm(base_formula, data = train_data, family = poisson)
+
+poisson_dispersion <- sum(residuals(poisson_model, type = "pearson")^2) /
+  df.residual(poisson_model)
+
+poisson_dispersion
+```
+
+A dispersion value far above one indicates that the Poisson variance assumption is too restrictive.
+
+## Quasi-Poisson
+
+```{r}
+quasipoisson_model <- glm(base_formula, data = train_data, family = quasipoisson)
+
+quasipoisson_dispersion <- summary(quasipoisson_model)$dispersion
+quasipoisson_dispersion
+```
+
+The quasi-Poisson model keeps the log-linear mean structure but adjusts coefficient standard errors for overdispersion. It does not provide a likelihood-based AIC.
+
+## Negative-binomial models
+
+```{r}
+negative_binomial_model <- glm.nb(base_formula, data = train_data)
+
+interaction_formula <- cnt ~ season * hr + hr * workingday +
+  atemp * hum + holiday + weekday + weathersit + windspeed
+
+negative_binomial_interactions <- glm.nb(
+  interaction_formula,
+  data = train_data
+)
+```
+
+```{r}
+head(coef(summary(negative_binomial_interactions)), 15) |>
+  kable(digits = 4, caption = "First fifteen coefficients of the interaction model")
+```
+
+Because `season`, `hr`, `workingday`, and `weathersit` are factors, their coefficients and interactions represent category-specific differences rather than artificial linear changes between numeric codes.
+
+## Temporal test-set evaluation
+
+```{r}
+poisson_prediction <- predict(poisson_model, newdata = test_data, type = "response")
+nb_prediction <- predict(negative_binomial_model, newdata = test_data, type = "response")
+nb_interaction_prediction <- predict(
+  negative_binomial_interactions,
+  newdata = test_data,
+  type = "response"
+)
+
+prediction_metrics <- function(observed, predicted) {
+  c(
+    RMSE = sqrt(mean((observed - predicted)^2)),
+    MAE = mean(abs(observed - predicted))
+  )
+}
+
+test_results <- rbind(
+  Poisson = prediction_metrics(test_data$cnt, poisson_prediction),
+  NegativeBinomial = prediction_metrics(test_data$cnt, nb_prediction),
+  NegativeBinomialInteractions = prediction_metrics(test_data$cnt, nb_interaction_prediction)
+)
+
+kable(test_results, digits = 3, caption = "Prediction error on 2012 observations")
+```
+
+```{r}
+model_comparison <- data.frame(
+  Model = c("Poisson", "Quasi-Poisson", "Negative binomial", "Negative binomial with interactions"),
+  TrainingAIC = c(
+    AIC(poisson_model),
+    NA,
+    AIC(negative_binomial_model),
+    AIC(negative_binomial_interactions)
+  )
+)
+
+kable(model_comparison, digits = 1, caption = "Likelihood-based training comparison")
+```
+
+Training AIC and future-year prediction error answer different questions, so both are reported.
+
+```{r}
+prediction_data <- data.frame(
+  Date = test_data$dteday,
+  Hour = test_data$hr,
+  Observed = test_data$cnt,
+  Predicted = nb_interaction_prediction
+)
+
+ggplot(prediction_data, aes(x = Predicted, y = Observed)) +
+  geom_point(alpha = 0.2, color = "#2C7FB8") +
+  geom_abline(intercept = 0, slope = 1, color = "#D7301F", linetype = 2) +
+  labs(
+    title = "Observed and predicted rentals in 2012",
+    x = "Predicted count",
+    y = "Observed count"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+first_two_weeks <- prediction_data[prediction_data$Date <= min(prediction_data$Date) + 13, ]
+
+first_two_weeks$Time <- as.POSIXct(
+  paste(first_two_weeks$Date, first_two_weeks$Hour),
+  format = "%Y-%m-%d %H"
+)
+
+plot_data <- rbind(
+  data.frame(Time = first_two_weeks$Time, Count = first_two_weeks$Observed, Series = "Observed"),
+  data.frame(Time = first_two_weeks$Time, Count = first_two_weeks$Predicted, Series = "Predicted")
+)
+
+ggplot(plot_data, aes(x = Time, y = Count, color = Series)) +
+  geom_line() +
+  scale_color_manual(values = c("Observed" = "black", "Predicted" = "#A505FB")) +
+  labs(title = "First two weeks of the 2012 test period", x = NULL, y = "Hourly rentals") +
+  theme_minimal()
+```
+
+## Limitations
+
+- The 2011-to-2012 split is intentionally difficult because overall demand changes over time.
+- AIC is not available for quasi-Poisson models.
+- Interactions increase flexibility and should be judged using the untouched future period.
+- The models describe associations and predictions, not causal effects.
+- `casual` and `registered` remain excluded because using components of `cnt` would make the prediction problem tautological.
+

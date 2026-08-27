@@ -1,0 +1,474 @@
+---
+title: "Are You Ready for a Zombie Apocalypse?"
+subtitle: "A Logistic Regression Project in R"
+author: "George Oikonomidis"
+format:
+  gfm:
+    toc: true
+    toc-depth: 2
+    number-sections: true
+engine: knitr
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+This educational project uses fictional zombie-apocalypse data to examine which personal characteristics and supplies are associated with zombie status. The main method is logistic regression, followed by simple model diagnostics and probability predictions.
+
+The project began as a guided DataCamp exercise and was later revised to improve the explanations, correct technical issues, and make the analysis reproducible.
+
+## Logistic regression
+
+The response has two possible outcomes: `Human` and `Zombie`. If $p$ is the probability of being classified as a zombie, logistic regression models the log-odds:
+
+$$
+\log\left(\frac{p}{1-p}\right)
+= \beta_0 + \beta_1X_1 + \cdots + \beta_kX_k.
+$$
+
+The exponential of a coefficient is an odds ratio:
+
+$$
+\text{Odds Ratio} = e^{\beta_j}.
+$$
+
+An odds ratio above 1 indicates higher estimated odds of zombie status, while a value below 1 indicates lower estimated odds, holding the other variables constant.
+
+## Libraries and data
+
+```{r}
+library(ggplot2)
+library(gridExtra)
+library(car)
+
+theme_set(theme_minimal())
+```
+
+```{r}
+zombies <- read.csv(
+  "data/zombies.csv",
+  stringsAsFactors = TRUE
+)
+
+dim(zombies)
+summary(zombies)
+```
+
+The dataset contains 200 fictional observations. The variables describe zombie status, age, sex, rurality, household size, water, food, medication, tools, first-aid supplies, sanitation, clothing, and documents.
+
+## Cleaning and feature engineering
+
+Missing values in `clothing` and `documents` mean that the person does not have those supplies. They are therefore recoded as explicit categories.
+
+```{r}
+zombies$zombie <- factor(
+  zombies$zombie,
+  levels = c("Human", "Zombie")
+)
+
+zombies$clothing <- as.character(zombies$clothing)
+zombies$clothing[is.na(zombies$clothing)] <- "No clothing"
+zombies$clothing <- factor(zombies$clothing)
+
+zombies$documents <- as.character(zombies$documents)
+zombies$documents[is.na(zombies$documents)] <- "No documents"
+zombies$documents <- factor(zombies$documents)
+
+# Water available to each member of the household
+zombies$water.person <- zombies$water / zombies$household
+
+summary(zombies[, c("age", "water.person", "clothing", "documents")])
+```
+
+`water.person` is more useful than total household water because it accounts for the number of people sharing the available supply.
+
+## Age and water availability
+
+```{r}
+#| fig-width: 10
+#| fig-height: 4.5
+
+age_plot <- ggplot(zombies, aes(x = age, fill = zombie)) +
+  geom_density(alpha = 0.35) +
+  labs(
+    title = "Age by Zombie Status",
+    x = "Age",
+    y = "Density",
+    fill = NULL
+  ) +
+  theme(legend.position = "bottom")
+
+water_plot <- ggplot(zombies, aes(x = water.person, fill = zombie)) +
+  geom_density(alpha = 0.35) +
+  labs(
+    title = "Water per Person by Zombie Status",
+    x = "Gallons of water per person",
+    y = "Density",
+    fill = NULL
+  ) +
+  theme(legend.position = "bottom")
+
+grid.arrange(age_plot, water_plot, ncol = 2)
+```
+
+The plots suggest that zombies tend to be older and have less water available per person. These are descriptive relationships and do not prove causation.
+
+## Comparing categorical characteristics
+
+The following tables show the percentage of humans and zombies within important categorical groups.
+
+```{r}
+round(
+  100 * prop.table(table(zombies$rurality, zombies$zombie), margin = 1),
+  1
+)
+
+round(
+  100 * prop.table(table(zombies$food, zombies$zombie), margin = 1),
+  1
+)
+
+round(
+  100 * prop.table(table(zombies$medication, zombies$zombie), margin = 1),
+  1
+)
+
+round(
+  100 * prop.table(table(zombies$sanitation, zombies$zombie), margin = 1),
+  1
+)
+```
+
+Urban observations have the highest observed zombie percentage, while rural observations have the lowest. Food, medication, and sanitation also show clear differences between the two groups.
+
+```{r}
+#| fig-width: 7
+#| fig-height: 4.5
+
+rurality_percentages <- as.data.frame(
+  100 * prop.table(table(zombies$rurality, zombies$zombie), margin = 1)
+)
+
+names(rurality_percentages) <- c("Rurality", "Status", "Percentage")
+
+ggplot(
+  subset(rurality_percentages, Status == "Zombie"),
+  aes(x = Rurality, y = Percentage, fill = Rurality)
+) +
+  geom_col(show.legend = FALSE) +
+  geom_text(
+    aes(label = paste0(round(Percentage, 1), "%")),
+    vjust = -0.3
+  ) +
+  labs(
+    title = "Observed Zombie Percentage by Rurality",
+    x = NULL,
+    y = "Zombie percentage"
+  )
+```
+
+## Chi-square tests
+
+Chi-square tests examine whether each categorical variable is associated with zombie status. A small p-value provides evidence against the hypothesis of no association.
+
+```{r}
+chi_sex <- chisq.test(table(zombies$sex, zombies$zombie))
+chi_rurality <- chisq.test(table(zombies$rurality, zombies$zombie))
+chi_food <- chisq.test(table(zombies$food, zombies$zombie))
+chi_medication <- chisq.test(table(zombies$medication, zombies$zombie))
+chi_tools <- chisq.test(table(zombies$tools, zombies$zombie))
+chi_firstaid <- chisq.test(table(zombies$firstaid, zombies$zombie))
+chi_sanitation <- chisq.test(table(zombies$sanitation, zombies$zombie))
+chi_clothing <- chisq.test(table(zombies$clothing, zombies$zombie))
+chi_documents <- chisq.test(table(zombies$documents, zombies$zombie))
+
+chi_results <- data.frame(
+  Variable = c(
+    "Sex", "Rurality", "Food", "Medication", "Tools",
+    "First aid", "Sanitation", "Clothing", "Documents"
+  ),
+  P_value = c(
+    chi_sex$p.value,
+    chi_rurality$p.value,
+    chi_food$p.value,
+    chi_medication$p.value,
+    chi_tools$p.value,
+    chi_firstaid$p.value,
+    chi_sanitation$p.value,
+    chi_clothing$p.value,
+    chi_documents$p.value
+  )
+)
+
+chi_results <- chi_results[order(chi_results$P_value), ]
+chi_results
+```
+
+Rurality, food, medication, and sanitation have statistically significant associations with zombie status. Sex, tools, first-aid supplies, clothing, and documents do not show strong evidence of association in this sample.
+
+## Tests for age and water
+
+Welch two-sample t-tests compare the mean age and mean water per person between humans and zombies.
+
+```{r}
+age_test <- t.test(age ~ zombie, data = zombies)
+water_test <- t.test(water.person ~ zombie, data = zombies)
+
+age_test
+water_test
+```
+
+Both tests produce very small p-values. In this fictional sample, zombies are older on average and have less water available per person. Statistical association does not establish a causal effect.
+
+## Logistic regression model
+
+The model includes the variables that showed clear relationships with zombie status in the exploratory analysis.
+
+```{r}
+zombie_model <- glm(
+  zombie ~ age + water.person + food + rurality + medication + sanitation,
+  data = zombies,
+  family = binomial(link = "logit")
+)
+
+summary(zombie_model)
+```
+
+Positive coefficients increase the estimated log-odds of zombie status. Negative coefficients reduce the estimated log-odds, after controlling for the other predictors.
+
+## Odds ratios
+
+```{r}
+model_coefficients <- summary(zombie_model)$coefficients
+
+odds_ratio_results <- data.frame(
+  Variable = rownames(model_coefficients),
+  Odds_ratio = exp(model_coefficients[, "Estimate"]),
+  Lower_95_CI = exp(
+    model_coefficients[, "Estimate"] -
+      1.96 * model_coefficients[, "Std. Error"]
+  ),
+  Upper_95_CI = exp(
+    model_coefficients[, "Estimate"] +
+      1.96 * model_coefficients[, "Std. Error"]
+  ),
+  P_value = model_coefficients[, "Pr(>|z|)"],
+  row.names = NULL
+)
+
+odds_ratio_results[, 2:5] <- round(odds_ratio_results[, 2:5], 4)
+odds_ratio_results
+```
+
+Older age, no food, suburban or urban residence, and no medication are associated with higher estimated zombie odds. More water per person and access to sanitation are associated with lower estimated odds.
+
+## Overall model test
+
+The likelihood-ratio test compares the fitted model with an intercept-only model.
+
+```{r}
+null_model <- glm(
+  zombie ~ 1,
+  data = zombies,
+  family = binomial(link = "logit")
+)
+
+anova(null_model, zombie_model, test = "Chisq")
+```
+
+The small p-value indicates that the predictors improve model fit when considered together.
+
+## Classification summary
+
+Probabilities at or above 0.50 are classified as `Zombie`.
+
+```{r}
+fitted_probability <- predict(zombie_model, type = "response")
+
+predicted_status <- ifelse(
+  fitted_probability >= 0.50,
+  "Zombie",
+  "Human"
+)
+
+confusion_matrix <- table(
+  Observed = zombies$zombie,
+  Predicted = predicted_status
+)
+
+confusion_matrix
+```
+
+```{r}
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+
+sensitivity <-
+  confusion_matrix["Zombie", "Zombie"] /
+  sum(confusion_matrix["Zombie", ])
+
+specificity <-
+  confusion_matrix["Human", "Human"] /
+  sum(confusion_matrix["Human", ])
+
+observed_zombie <- ifelse(zombies$zombie == "Zombie", 1, 0)
+brier_score <- mean((observed_zombie - fitted_probability)^2)
+
+classification_results <- data.frame(
+  Metric = c("Accuracy", "Sensitivity", "Specificity", "Brier score"),
+  Value = c(accuracy, sensitivity, specificity, brier_score)
+)
+
+classification_results$Value <- round(classification_results$Value, 3)
+classification_results
+```
+
+The model correctly classifies 172 of the 200 observations. Sensitivity is approximately 79.7% and specificity approximately 90.1%.
+
+These results are **in-sample** because the same observations were used to fit and evaluate the model. They describe apparent fit and may be optimistic.
+
+## Multicollinearity
+
+Variance inflation factors examine whether predictors contain strongly overlapping information.
+
+```{r}
+vif(zombie_model)
+```
+
+The adjusted generalized VIF values are close to 1, so there is little evidence of problematic multicollinearity.
+
+## Linearity of numeric predictors
+
+Logistic regression assumes that numeric predictors have an approximately linear relationship with the log-odds of the response.
+
+```{r}
+#| fig-width: 10
+#| fig-height: 4.5
+
+zombies$logit_zombie <- log(
+  fitted_probability / (1 - fitted_probability)
+)
+
+age_linearity <- ggplot(zombies, aes(x = age, y = logit_zombie)) +
+  geom_point(color = "gray60") +
+  geom_smooth(method = "loess", se = FALSE, color = "orange") +
+  geom_smooth(
+    method = "lm",
+    se = FALSE,
+    color = "black",
+    linetype = "dashed"
+  ) +
+  labs(
+    title = "Age and Estimated Log-Odds",
+    x = "Age",
+    y = "Estimated log-odds"
+  )
+
+water_linearity <- ggplot(
+  zombies,
+  aes(x = water.person, y = logit_zombie)
+) +
+  geom_point(color = "gray60") +
+  geom_smooth(method = "loess", se = FALSE, color = "orange") +
+  geom_smooth(
+    method = "lm",
+    se = FALSE,
+    color = "black",
+    linetype = "dashed"
+  ) +
+  labs(
+    title = "Water per Person and Estimated Log-Odds",
+    x = "Gallons of water per person",
+    y = "Estimated log-odds"
+  )
+
+grid.arrange(age_linearity, water_linearity, ncol = 2)
+```
+
+The relationships are reasonably close to linear, although the plots should be interpreted as informal diagnostics rather than strict pass-or-fail tests.
+
+## Residuals and influential observations
+
+```{r}
+#| fig-width: 10
+#| fig-height: 4.5
+
+deviance_residuals <- residuals(zombie_model, type = "deviance")
+cook_values <- cooks.distance(zombie_model)
+
+residual_plot <- ggplot(
+  data.frame(
+    Probability = fitted_probability,
+    Residual = deviance_residuals
+  ),
+  aes(x = Probability, y = Residual)
+) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_smooth(method = "loess", se = FALSE, color = "orange") +
+  labs(
+    title = "Deviance Residuals vs Fitted Probability",
+    x = "Fitted probability",
+    y = "Deviance residual"
+  )
+
+influence_plot <- ggplot(
+  data.frame(
+    Observation = 1:nrow(zombies),
+    Cook_distance = cook_values
+  ),
+  aes(x = Observation, y = Cook_distance)
+) +
+  geom_col() +
+  geom_hline(
+    yintercept = 4 / nrow(zombies),
+    color = "orange",
+    linetype = "dashed"
+  ) +
+  labs(
+    title = "Cook's Distance",
+    x = "Observation",
+    y = "Cook's distance"
+  )
+
+grid.arrange(residual_plot, influence_plot, ncol = 2)
+```
+
+Potentially influential observations should be investigated, not automatically removed.
+
+## Scenario predictions
+
+The fitted model is used to estimate zombie probabilities for three fictional people.
+
+```{r}
+scenario_data <- data.frame(
+  Person = c("Dad", "Brother", "Me"),
+  age = c(71, 40, 24),
+  water.person = c(5, 3, 10),
+  food = c("Food", "Food", "Food"),
+  rurality = c("Suburban", "Urban", "Rural"),
+  medication = c("Medication", "Medication", "No medication"),
+  sanitation = c("Sanitation", "Sanitation", "Sanitation")
+)
+
+scenario_data$Zombie_probability <- predict(
+  zombie_model,
+  newdata = scenario_data,
+  type = "response"
+)
+
+scenario_data$Zombie_percentage <- paste0(
+  round(100 * scenario_data$Zombie_probability, 2),
+  "%"
+)
+
+scenario_data[, c("Person", "Zombie_probability", "Zombie_percentage")]
+```
+
+The original fitted probabilities are approximately 15.5% for Dad, 9.7% for Brother, and 0.2% for Me. These are playful outputs based on fictional data, not real risk estimates.
+
+## Conclusion
+
+This project demonstrates a complete but accessible logistic-regression workflow. Age, water availability, food, rurality, medication, and sanitation help explain zombie status in the fictional sample. Odds ratios make the fitted coefficients easier to interpret, while the diagnostic plots provide checks for multicollinearity, linearity, residual patterns, and influential observations.
+
+The main limitations are the fictional data, exploratory variable screening, and in-sample evaluation. The results should therefore be treated as an educational statistical-learning exercise rather than a real prediction system.

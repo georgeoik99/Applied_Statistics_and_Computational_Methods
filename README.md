@@ -4,6 +4,13 @@ A collection of MSc coursework, statistical case studies, programming exercises 
 
 The repository focuses on the practical implementation of statistical theory, mathematical optimization and computational methods. It includes academic assignments, classroom exercises and selected extended case studies from the MSc in Applied Statistics and Data Analytics.
 
+## Current Repository Map
+
+- [`01_Estimation_and_Inference/`](01_Estimation_and_Inference/) — Python notebooks on estimation, inference, distributions, regression from scratch and hypothesis testing.
+- [`02_Statistical_Modeling/`](02_Statistical_Modeling/) — R/Quarto projects on linear models, generalized linear models, model selection, prediction, and diagnostics.
+- [`03_Computational_Statistics/`](03_Computational_Statistics/) — R/Quarto case studies on numerical optimization, MLE, simulation, Monte Carlo and bootstrap methods.
+- [`04_High_Dimensional_Statistics/`](04_High_Dimensional_Statistics/) — R/Quarto notebooks on PCA, t-SNE, multiple testing, streaming regression and high-dimensional applications.
+
 ## Main Areas
 
 ### Statistical Modeling
@@ -120,13 +127,10 @@ Example structure:
 ```text
 Applied_Statistics_and_Computational_Methods/
 │
-├── regression-and-glms/
-├── statistical-inference/
-├── computational-statistics/
-├── optimization-methods/
-├── multivariate-statistics/
-├── big-data-methods/
-├── data/
+├── 01_Estimation_and_Inference/
+├── 02_Statistical_Modeling/
+├── 03_Computational_Statistics/
+├── 04_High_Dimensional_Statistics/
 └── README.md
 ```
 

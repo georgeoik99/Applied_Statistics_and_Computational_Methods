@@ -1,0 +1,584 @@
+---
+title: "Multiple Linear Regression and Model Selection"
+subtitle: "AIC, BIC, Multicollinearity and Model Diagnostics"
+format:
+  gfm:
+    toc: true
+    number-sections: true
+engine: knitr
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+This project applies multiple linear regression to a dataset with one response variable, `Y2`, and 52 candidate explanatory variables. The analysis follows the original MSc assignment: descriptive analysis, correlation inspection, multicollinearity screening, stepwise model selection with AIC and BIC, and diagnostic analysis of the final model.
+
+The main objective is to identify a smaller and interpretable set of predictors without ignoring the problems created by a very large candidate set and a small sample.
+
+For observation $i$, the full multiple linear regression model is
+
+$$
+Y_i = \beta_0 + \beta_1X_{i1} + \beta_2X_{i2} + \cdots + \beta_{52}X_{i52} + \varepsilon_i,
+$$
+
+where
+
+$$
+\varepsilon_i \overset{\mathrm{iid}}{\sim} N(0,\sigma^2).
+$$
+
+Each coefficient $\beta_j$ represents the expected change in `Y2` for a one-unit increase in $X_j$, holding the other predictors constant.
+
+## Libraries and data
+
+```{r}
+library(ggplot2)
+library(tidyr)
+library(corrplot)
+library(broom)
+library(car)
+```
+
+The original Excel worksheet was cleaned once and stored as a CSV inside the repository. This avoids using an absolute path and allows the project to run on another computer.
+
+```{r}
+data_path <- "data/multiple_regression_dataset2.csv"
+df <- read.csv(data_path)
+
+dim(df)
+str(df)
+summary(df)
+```
+
+The dataset contains 59 observations. All 53 modeling variables are numeric: one response (`Y2`) and 52 candidate predictors (`X1`-`X52`).
+
+This is a difficult modeling setting because the number of candidate predictors is close to the sample size. The full model estimates 53 coefficients from only 59 observations, leaving very little information for estimating the residual variance.
+
+## Descriptive statistics
+
+```{r}
+descriptives_df <- data.frame(
+  min = sapply(df, function(x) min(x, na.rm = TRUE)),
+  quantile_1 = sapply(df, function(x) quantile(x, 0.25, na.rm = TRUE)),
+  median = sapply(df, function(x) median(x, na.rm = TRUE)),
+  mean = sapply(df, function(x) mean(x, na.rm = TRUE)),
+  quantile_3 = sapply(df, function(x) quantile(x, 0.75, na.rm = TRUE)),
+  max = sapply(df, function(x) max(x, na.rm = TRUE))
+)
+
+descriptives_df
+```
+
+The table provides the center, spread and range of every variable. It is used as an initial data check and helps identify differences in scale before fitting the regression models.
+
+## Distribution of the response
+
+```{r}
+#| fig-width: 7
+#| fig-height: 4.5
+
+ggplot(df, aes(x = Y2)) +
+  geom_histogram(
+    aes(y = after_stat(density)),
+    bins = 15,
+    color = "black",
+    fill = "#A9C8E5"
+  ) +
+  geom_density(color = "#2C7FB8", linewidth = 1) +
+  labs(
+    title = "Distribution of the dependent variable",
+    x = "Y2",
+    y = "Density"
+  ) +
+  theme_minimal()
+```
+
+The histogram and density curve describe the marginal distribution of `Y2`. In the original script, the histogram used counts while the density curve used density values. The corrected version places both on the density scale so that they can be interpreted together.
+
+## Predictor distributions
+
+The predictors are divided into two groups so that their histograms remain readable.
+
+```{r}
+first_data_split <- df[, 2:27]
+second_data_split <- df[, 28:53]
+
+histograms_df1 <- first_data_split |>
+  pivot_longer(cols = everything())
+
+histograms_df1$name <- factor(
+  histograms_df1$name,
+  levels = names(first_data_split)
+)
+
+histograms_df2 <- second_data_split |>
+  pivot_longer(cols = everything())
+
+histograms_df2$name <- factor(
+  histograms_df2$name,
+  levels = names(second_data_split)
+)
+```
+
+```{r}
+#| fig-width: 10
+#| fig-height: 12
+
+ggplot(histograms_df1, aes(x = value)) +
+  geom_histogram(color = "black", fill = "#0586F5") +
+  facet_wrap(~ name, scales = "free", ncol = 4) +
+  theme_minimal() +
+  labs(title = "Distributions of X1-X26", x = NULL, y = "Count")
+```
+
+```{r}
+#| fig-width: 10
+#| fig-height: 12
+
+ggplot(histograms_df2, aes(x = value)) +
+  geom_histogram(color = "black", fill = "#0586F5") +
+  facet_wrap(~ name, scales = "free", ncol = 4) +
+  theme_minimal() +
+  labs(title = "Distributions of X27-X52", x = NULL, y = "Count")
+```
+
+## Correlation plots
+
+The correlation matrix is divided into the same three hardcoded groups used in the original assignment.
+
+The Pearson correlation between two variables $X$ and $Y$ is
+
+$$
+r_{XY} = \frac{\operatorname{cov}(X,Y)}{s_Xs_Y}.
+$$
+
+Values close to $1$ or $-1$ indicate a strong linear relationship. Large correlations among predictors can make individual regression coefficients unstable, even when the overall model fits the data well.
+
+```{r}
+#| fig-width: 9
+#| fig-height: 9
+
+corrplot_group1 <- df[, 1:17]
+corrplot_group2 <- df[, c(1, 18:35)]
+corrplot_group3 <- df[, c(1, 36:53)]
+
+M1 <- cor(corrplot_group1)
+M2 <- cor(corrplot_group2)
+M3 <- cor(corrplot_group3)
+
+corrplot(
+  M1,
+  method = "square",
+  order = "AOE",
+  addCoef.col = "black",
+  tl.pos = "d",
+  cl.pos = "n",
+  col = colorRampPalette(c("#A77062", "white", "#2AB6EF"))(20)
+)
+
+corrplot(
+  M2,
+  method = "square",
+  order = "AOE",
+  addCoef.col = "black",
+  tl.pos = "d",
+  cl.pos = "n",
+  col = colorRampPalette(c("#A77062", "white", "#2AB6EF"))(20)
+)
+
+corrplot(
+  M3,
+  method = "square",
+  order = "AOE",
+  addCoef.col = "black",
+  tl.pos = "d",
+  cl.pos = "n",
+  col = colorRampPalette(c("#A77062", "white", "#2AB6EF"))(20)
+)
+```
+
+## Pair plots
+
+The pair plots are retained from the original work. They are divided into smaller groups because a single plot with all predictors would be unreadable.
+
+These plots provide a visual check for linear relationships, unusual observations and strongly related predictor pairs. They are exploratory and do not replace the formal regression diagnostics below.
+
+```{r}
+#| fig-width: 10
+#| fig-height: 10
+
+num_columns <- ncol(df)
+
+for (i in seq(1, num_columns, by = 10)) {
+  subset_data <- df[, i:min(i + 9, num_columns)]
+
+  pairs(
+    subset_data,
+    main = paste(
+      "Pairs Plot - Columns",
+      i,
+      "to",
+      min(i + 9, num_columns)
+    ),
+    col = "#0998CE"
+  )
+}
+```
+
+## Full multiple regression model
+
+```{r}
+first_full_model <- lm(Y2 ~ ., data = df)
+
+summary(first_full_model)
+round(vif(first_full_model), 2)
+```
+
+The full model uses 52 predictors with only 59 observations. It can be estimated, but it has very few residual degrees of freedom and is likely to overfit the sample.
+
+The full model produces $R^2 = 0.979$, but its adjusted $R^2$ is lower at approximately $0.793$. More importantly, only six residual degrees of freedom remain. The very high $R^2$ therefore does not by itself indicate a reliable predictive model.
+
+## Initial multicollinearity screening
+
+The following variables were removed in the original assignment after inspection of the correlation and VIF results.
+
+For predictor $X_j$, the variance inflation factor is
+
+$$
+\operatorname{VIF}_j = \frac{1}{1-R_j^2},
+$$
+
+where $R_j^2$ is obtained by regressing $X_j$ on the remaining predictors. A large VIF indicates that the predictor is strongly explained by the other predictors and that its estimated coefficient may have inflated variance.
+
+```{r}
+removecol <- c(
+  "X5", "X8", "X9", "X20", "X21", "X22", "X23",
+  "X24", "X25", "X29", "X34", "X36", "X44"
+)
+
+transformed_df <- df[, !(names(df) %in% removecol)]
+
+transformed_model <- lm(Y2 ~ ., data = transformed_df)
+
+summary(transformed_model)
+anova(transformed_model)
+round(vif(transformed_model), 2)
+```
+
+The screening step is part of the original academic workflow. It reduces the number of predictors but does not guarantee that all multicollinearity has been removed.
+
+After removing the 13 specified variables, 39 predictors remain. The transformed model has 19 residual degrees of freedom, $R^2 = 0.834$ and adjusted $R^2 = 0.493$. The reduction in fit is expected because the model is now considerably less saturated.
+
+## AIC and BIC before stepwise selection
+
+```{r}
+aic_first_model <- AIC(first_full_model)
+bic_first_model <- BIC(first_full_model)
+aic_transformed_model <- AIC(transformed_model)
+bic_transformed_model <- BIC(transformed_model)
+
+data.frame(
+  model = c("Full model", "Transformed model"),
+  AIC = c(aic_first_model, aic_transformed_model),
+  BIC = c(bic_first_model, bic_transformed_model)
+)
+```
+
+## Stepwise model selection
+
+The original assignment compares AIC and BIC selection using both the full and transformed candidate sets.
+
+For a model with maximized likelihood $L$ and $k$ estimated parameters,
+
+$$
+\operatorname{AIC} = -2\log(L) + 2k,
+$$
+
+and
+
+$$
+\operatorname{BIC} = -2\log(L) + k\log(n).
+$$
+
+Both criteria balance model fit against complexity. For this dataset, $\log(59) > 2$, so BIC penalizes additional predictors more strongly than AIC.
+
+```{r}
+first_AIC <- step(
+  first_full_model,
+  direction = "both",
+  trace = 0
+)
+
+first_BIC <- step(
+  first_full_model,
+  k = log(nrow(df)),
+  direction = "both",
+  trace = 0
+)
+
+transformed_AIC <- step(
+  transformed_model,
+  direction = "both",
+  trace = 0
+)
+
+transformed_BIC <- step(
+  transformed_model,
+  k = log(nrow(transformed_df)),
+  direction = "both",
+  trace = 0
+)
+```
+
+```{r}
+summary(first_AIC)
+summary(first_BIC)
+summary(transformed_AIC)
+summary(transformed_BIC)
+```
+
+### Model comparison
+
+```{r}
+model_comparison <- data.frame(
+  model = c(
+    "Full candidate set - AIC",
+    "Full candidate set - BIC",
+    "Transformed candidate set - AIC",
+    "Transformed candidate set - BIC"
+  ),
+  predictors = c(
+    length(coef(first_AIC)) - 1,
+    length(coef(first_BIC)) - 1,
+    length(coef(transformed_AIC)) - 1,
+    length(coef(transformed_BIC)) - 1
+  ),
+  adjusted_R_squared = c(
+    summary(first_AIC)$adj.r.squared,
+    summary(first_BIC)$adj.r.squared,
+    summary(transformed_AIC)$adj.r.squared,
+    summary(transformed_BIC)$adj.r.squared
+  ),
+  AIC = c(
+    AIC(first_AIC),
+    AIC(first_BIC),
+    AIC(transformed_AIC),
+    AIC(transformed_BIC)
+  ),
+  BIC = c(
+    BIC(first_AIC),
+    BIC(first_BIC),
+    BIC(transformed_AIC),
+    BIC(transformed_BIC)
+  )
+)
+
+model_comparison
+```
+
+AIC usually retains more predictors, while BIC applies a stronger penalty for model complexity. Because the sample is small relative to the number of candidate predictors, all selected models should be interpreted cautiously.
+
+The stepwise results illustrate this difference:
+
+- selection from the transformed set retains 18 predictors with AIC;
+- selection from the transformed set retains only 6 predictors with BIC;
+- the transformed AIC model has adjusted $R^2 = 0.699$;
+- the transformed BIC model has adjusted $R^2 = 0.622$.
+
+The searches beginning from the full model still retain 46 predictors under AIC and 43 under BIC. Although these models have strong in-sample fit, they remain very large for 59 observations. The original assignment therefore continued with the screened candidate set.
+
+## Final AIC model
+
+The original project selected the AIC model produced from the transformed dataset. Its formula is kept explicitly rather than generated programmatically.
+
+```{r}
+final_aic_model <- lm(
+  Y2 ~ X1 + X2 + X6 + X10 + X15 + X16 + X17 + X18 +
+    X26 + X33 + X37 + X39 + X42 + X43 + X47 + X48 + X49 + X51,
+  data = transformed_df
+)
+
+summary(final_aic_model)
+anova(final_aic_model)
+round(vif(final_aic_model), 2)
+```
+
+The hardcoded formula above exactly reproduces the model returned by `transformed_AIC`. The final model explains approximately $79.3\%$ of the observed variation in `Y2`, while its adjusted $R^2$ is approximately $69.9\%$. The difference between the two values reflects the penalty for including 18 predictors.
+
+The coefficient signs describe partial associations after controlling for the other selected variables. For example, positive coefficients indicate that larger predictor values are associated with larger expected `Y2`, while negative coefficients indicate the opposite. Coefficient magnitudes should not be compared directly when predictors use different measurement scales.
+
+Several predictors, including `X26`, `X33`, `X42` and `X48`, have particularly small p-values in this fitted model. However, these p-values are exploratory because the same sample was first used for variable selection and then for inference.
+
+## Model diagnostics
+
+The classical linear-model assumptions are:
+
+1. linearity between the response and predictors;
+2. independent errors;
+3. approximately constant error variance;
+4. approximately normal residuals for inference;
+5. absence of extreme influential observations;
+6. no perfect multicollinearity.
+
+The four standard diagnostic plots examine residual patterns, normality, scale-location behavior and influential observations.
+
+```{r}
+#| fig-width: 8
+#| fig-height: 7
+
+par(mfrow = c(2, 2))
+plot(final_aic_model)
+par(mfrow = c(1, 1))
+```
+
+```{r}
+shapiro.test(residuals(final_aic_model))
+```
+
+For the final model, the Shapiro-Wilk test gives approximately $W=0.987$ and $p=0.790$. Therefore, there is no statistical evidence against residual normality at the 5% significance level. The test is still considered together with the Q-Q plot; it does not assess linearity, independence or constant variance.
+
+### Cook's distance
+
+Cook's distance measures how strongly the fitted model changes when an observation is removed. The conventional exploratory cutoff used here is
+
+$$
+D_i > \frac{4}{n} = \frac{4}{59} \approx 0.0678.
+$$
+
+```{r}
+#| fig-width: 7
+#| fig-height: 4.5
+
+cook_values <- cooks.distance(final_aic_model)
+cook_cutoff <- 4 / nrow(transformed_df)
+
+plot(
+  cook_values,
+  col = "#0576F5",
+  pch = 16,
+  main = "Cook's distance",
+  xlab = "Observation",
+  ylab = "Cook's distance"
+)
+
+abline(h = cook_cutoff, col = "red", lty = 2)
+```
+
+```{r}
+influential_points <- which(cook_values > cook_cutoff)
+influential_points
+```
+
+Using the $4/n$ rule identifies observations 2, 3, 4, 12, 47, 49, 50 and 52 for closer inspection. This does not automatically mean that these observations are erroneous or should be deleted. Their data quality and effect on the substantive conclusions should be examined before changing the model.
+
+### Residual results
+
+```{r}
+AIC_aug <- augment(final_aic_model)
+
+results_final_model <- AIC_aug[, c(
+  ".fitted",
+  ".resid",
+  ".hat",
+  ".sigma",
+  ".cooksd",
+  ".std.resid"
+)]
+
+head(results_final_model, 10)
+```
+
+```{r}
+#| fig-width: 7
+#| fig-height: 4.5
+
+hist(
+  results_final_model$.resid,
+  breaks = 10,
+  probability = TRUE,
+  main = "Distribution of residuals",
+  xlab = "Residuals",
+  ylab = "Density",
+  col = "#0576F5"
+)
+
+lines(
+  density(results_final_model$.resid),
+  col = "#06B1E5",
+  lwd = 2
+)
+```
+
+## Observed and fitted values
+
+The original script generated random predictor values and then attempted to use an `actual_response` column that did not exist. Without known response values for new observations, a predicted-versus-actual comparison cannot be made. The corrected graph therefore compares the observed `Y2` values with the fitted values from the final model.
+
+For a new predictor vector $\mathbf{x}_0$, the fitted mean response is
+
+$$
+\widehat{Y}_0 = \mathbf{x}_0^T\widehat{\boldsymbol{\beta}}.
+$$
+
+A prediction interval is wider than a confidence interval for the mean because it also includes the uncertainty of an individual future observation.
+
+```{r}
+my_predictions <- predict(
+  final_aic_model,
+  newdata = transformed_df,
+  interval = "prediction"
+)
+
+prediction_results <- data.frame(
+  actual = transformed_df$Y2,
+  predicted = my_predictions[, "fit"],
+  lower = my_predictions[, "lwr"],
+  upper = my_predictions[, "upr"]
+)
+
+head(prediction_results, 10)
+```
+
+```{r}
+#| fig-width: 6.5
+#| fig-height: 5
+
+plot(
+  prediction_results$predicted,
+  prediction_results$actual,
+  main = "Observed vs. fitted values",
+  xlab = "Fitted Y2",
+  ylab = "Observed Y2",
+  col = "#0576F5",
+  pch = 16
+)
+
+abline(a = 0, b = 1, col = "red", lty = 2, lwd = 2)
+```
+
+This is an in-sample assessment, not an evaluation on unseen test data.
+
+Points close to the red 45-degree line have fitted values close to their observed responses. Because these observations were also used to estimate the model, the graph describes model fit and must not be presented as test-set predictive performance.
+
+## Conclusions and limitations
+
+The project compares multiple linear regression models selected through AIC and BIC. The final model follows the original assignment choice: the AIC model fitted after the initial multicollinearity screening.
+
+The main limitations are the small sample relative to the 52 initial predictors, possible overfitting, remaining multicollinearity, and the instability associated with stepwise selection. The reported diagnostics and fitted values describe the available sample and should not be interpreted as validated out-of-sample predictive performance.
+
+## Corrections made to the original script
+
+The project logic and hardcoded final model were retained. The following technical problems were corrected:
+
+- the data path is relative to the repository rather than fixed to drive `E:`;
+- unnecessary duplicate package imports and interactive `View()` calls were removed;
+- the response histogram and density curve now use the same vertical scale;
+- the predictor order is preserved in the faceted histograms;
+- the BIC penalty uses `nrow(df)` directly;
+- the final hardcoded formula was checked against the actual `transformed_AIC` result;
+- the residual histogram uses a density scale before adding `density()`;
+- the undefined `explanatory_data$actual_response` was removed;
+- randomly generated predictors were not presented as a valid prediction test;
+- the final observed-versus-fitted graph uses the real `Y2` values and the correct 45-degree reference line.
+
+These corrections make the code executable and the interpretation more accurate without changing the central methodology of the original assignment.
