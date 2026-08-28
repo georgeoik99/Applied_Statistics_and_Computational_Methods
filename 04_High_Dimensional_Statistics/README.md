@@ -6,13 +6,13 @@ An R-first collection of MSc work on dimension reduction, multiple testing, clas
 
 | Notebook | Main topics |
 |---|---|
-| [MNIST: PCA and t-SNE](01_mnist_pca_tsne.qmd) | Image inspection, PCA, t-SNE, common sampling, and careful interpretation of nonlinear embeddings |
-| [Leukemia and multiple testing](02_leukemia_multiple_testing.qmd) | Gene-expression summaries, PCA, gene-wise t-tests, FWER, FDR, pFDR, and exploratory DE-gene visualization |
-| [Streaming big-data regression](03_streaming_big_data_regression.qmd) | Chunk-wise cross-products, exact recursive OLS, random partitions, inverse-variance weighting, and estimator comparison |
-| [Bike Sharing count models](04_bike_sharing_count_models.qmd) | Poisson, quasi-Poisson, negative binomial regression, overdispersion, interactions, and temporal evaluation |
-| [Hotel booking classification](05_hotel_booking_classification.qmd) | Stratified evaluation, logistic regression, stepwise selection, Lasso, Random Forest, SVM, ROC AUC, and balanced accuracy |
-| [Coffee clustering](06_coffee_clustering.qmd) | Hierarchical clustering, K-means, mclust, pgmm, fabMix, silhouette analysis, BIC, and post-hoc ARI |
-| [Binary-data clustering](07_binary_data_clustering.qmd) | Asymmetric binary distance, missing values, Bernoulli mixtures, Bayesian mixtures, MDS, and cluster-number uncertainty |
+| [MNIST: PCA and t-SNE](01_mnist_pca_tsne.md) | Image inspection, PCA, t-SNE, common sampling, and careful interpretation of nonlinear embeddings |
+| [Leukemia and multiple testing](02_leukemia_multiple_testing.md) | Gene-expression summaries, PCA, gene-wise t-tests, FWER, FDR, pFDR, and exploratory DE-gene visualization |
+| [Streaming big-data regression](03_streaming_big_data_regression.md) | Chunk-wise cross-products, exact recursive OLS, random partitions, inverse-variance weighting, and estimator comparison |
+| [Bike Sharing count models](04_bike_sharing_count_models.md) | Poisson, quasi-Poisson, negative binomial regression, overdispersion, interactions, and temporal evaluation |
+| [Hotel booking classification](05_hotel_booking_classification.md) | Stratified evaluation, logistic regression, stepwise selection, Lasso, Random Forest, SVM, ROC AUC, and balanced accuracy |
+| [Coffee clustering](06_coffee_clustering.md) | Hierarchical clustering, K-means, mclust, pgmm, fabMix, silhouette analysis, BIC, and post-hoc ARI |
+| [Binary-data clustering](07_binary_data_clustering.md) | Asymmetric binary distance, missing values, Bernoulli mixtures, Bayesian mixtures, MDS, and cluster-number uncertainty |
 
 The notebooks live directly in this directory; no additional `Assignment_1` subdirectory is required.
 

@@ -1,0 +1,135 @@
+# Gamma Rate Estimation
+George Oikonomidis
+
+- [Exercise](#exercise)
+
+``` r
+options(digits = 5)
+```
+
+## Exercise
+
+The recorded delivery times are modelled with a Gamma distribution
+having fixed shape $\alpha=2.5$ and unknown **rate** $\beta$. Write the
+log-likelihood, obtain the MLE numerically with Newton–Raphson, and
+verify whether a closed-form solution exists.
+
+The log-likelihood is
+
+$$\ell(\beta)=n\alpha\log\beta-n\log\Gamma(\alpha)
++(\alpha-1)\sum_i\log x_i-
+\beta\sum_i x_i.$$
+
+``` r
+delivery_times <- c(
+  2.10, 3.40, 4.25, 5.60, 6.40, 7.30, 8.50, 8.75,
+  8.90, 9.50, 9.75, 10.00, 10.40, 10.40, 16.00, 19.00
+)
+
+gamma_loglik_rate <- function(beta, alpha, x) {
+  if (beta <= 0) return(-Inf)
+
+  length(x) * alpha * log(beta) - length(x) * lgamma(alpha) +
+    (alpha - 1) * sum(log(x)) - beta * sum(x)
+}
+
+alpha_fixed <- 2.5
+
+c(
+  observations = length(delivery_times),
+  sample_mean = mean(delivery_times),
+  loglik_at_beta_1 = gamma_loglik_rate(
+    beta = 1,
+    alpha = alpha_fixed,
+    x = delivery_times
+  )
+)
+```
+
+        observations      sample_mean loglik_at_beta_1 
+             16.0000           8.7656         -95.7451 
+
+### Newton–Raphson implementation
+
+The score and Hessian are
+
+$$\ell'(\beta)=\frac{n\alpha}{\beta}-\sum_i x_i,
+\qquad
+\ell''(\beta)=-\frac{n\alpha}{\beta^2}.$$
+
+``` r
+newton_gamma_rate <- function(start, alpha, x,
+                              tolerance = 1e-12,
+                              max_iter = 100) {
+  beta <- start
+  trace <- data.frame(iteration = 0, beta = beta)
+
+  for (iteration in seq_len(max_iter)) {
+    score <- length(x) * alpha / beta - sum(x)
+    hessian <- -length(x) * alpha / beta^2
+    candidate <- beta - score / hessian
+
+    if (!is.finite(candidate) || candidate <= 0) {
+      stop("Newton step left the admissible domain beta > 0.")
+    }
+
+    trace <- rbind(
+      trace,
+      data.frame(iteration = iteration, beta = candidate)
+    )
+
+    if (abs(candidate - beta) <= tolerance * (1 + abs(beta))) {
+      return(list(estimate = candidate, converged = TRUE, trace = trace))
+    }
+
+    beta <- candidate
+  }
+
+  list(estimate = beta, converged = FALSE, trace = trace)
+}
+
+beta_newton <- newton_gamma_rate(
+  start = 0.1,
+  alpha = alpha_fixed,
+  x = delivery_times
+)
+
+beta_newton$trace
+```
+
+      iteration    beta
+    1         0 0.10000
+    2         1 0.16494
+    3         2 0.23449
+    4         3 0.27619
+    5         4 0.28492
+    6         5 0.28520
+    7         6 0.28520
+    8         7 0.28520
+
+### Closed-form verification
+
+The score equation can also be solved directly:
+
+$$\widehat\beta=\frac{n\alpha}{\sum_i x_i}.$$
+
+``` r
+beta_closed_form <- length(delivery_times) * alpha_fixed /
+  sum(delivery_times)
+
+data.frame(
+  method = c("Newton-Raphson", "Closed-form MLE"),
+  beta_hat = c(beta_newton$estimate, beta_closed_form),
+  log_likelihood = c(
+    gamma_loglik_rate(beta_newton$estimate, alpha_fixed, delivery_times),
+    gamma_loglik_rate(beta_closed_form, alpha_fixed, delivery_times)
+  )
+)
+```
+
+               method beta_hat log_likelihood
+    1  Newton-Raphson   0.2852        -45.677
+    2 Closed-form MLE   0.2852        -45.677
+
+The numerical method remains a useful computational check, but it is not
+required for this particular one-parameter problem.

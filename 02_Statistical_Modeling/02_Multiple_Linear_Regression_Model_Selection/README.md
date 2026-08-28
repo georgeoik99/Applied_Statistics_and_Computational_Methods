@@ -18,6 +18,7 @@ An R/Quarto MSc project examining a regression problem with one response and 52 
 ```text
 02_Multiple_Linear_Regression_Model_Selection/
 ├── README.md
+├── multiple_linear_regression_model_selection.md
 ├── multiple_linear_regression_model_selection.qmd
 └── data/
     └── multiple_regression_dataset2.csv
@@ -38,6 +39,8 @@ install.packages(c("ggplot2", "tidyr", "corrplot", "broom", "car", "knitr"))
 ```
 
 ## Render
+
+View the [rendered analysis](multiple_linear_regression_model_selection.md) on GitHub.
 
 From this directory:
 

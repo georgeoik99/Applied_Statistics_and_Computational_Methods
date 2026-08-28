@@ -18,6 +18,7 @@ A playful R project that uses fictional data to estimate the probability that a 
 ```text
 01_Zombie_Apocalypse_Logistic_Regression/
 ├── README.md
+├── zombie_apocalypse_logistic_regression.md
 ├── zombie_apocalypse_logistic_regression.qmd
 └── data/
     └── zombies.csv
@@ -37,7 +38,7 @@ Install the packages once:
 install.packages(c("ggplot2", "gridExtra", "car"))
 ```
 
-Open `zombie_apocalypse_logistic_regression.qmd` in RStudio and use **Run All**, or render it with:
+View the [rendered analysis](zombie_apocalypse_logistic_regression.md) on GitHub. To edit or rerun it, open `zombie_apocalypse_logistic_regression.qmd` in RStudio and use **Run All**, or render it with:
 
 ```powershell
 quarto render zombie_apocalypse_logistic_regression.qmd
